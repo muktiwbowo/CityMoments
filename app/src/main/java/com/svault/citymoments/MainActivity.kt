@@ -2,12 +2,19 @@
 
 package com.svault.citymoments
 
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,38 +45,93 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.svault.citymoments.ui.theme.CityMomentsTheme
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent {
-            CityMomentsTheme {
-                AppNavigation()
+    private val hasLocationPermission = mutableStateOf(false)
+
+    private val locationPermissionRequest = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        when {
+            permissions[android.Manifest.permission.ACCESS_FINE_LOCATION] == true -> {
+                hasLocationPermission.value = true
+            }
+
+            permissions[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true -> {
+                hasLocationPermission.value = true
+            }
+
+            else -> {
+                hasLocationPermission.value = false
             }
         }
     }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        hasLocationPermission.value = checkLocationPermission()
+        enableEdgeToEdge()
+        setContent {
+            CityMomentsTheme {
+                AppNavigation(
+                    hasPermission = hasLocationPermission.value,
+                    onRequestPermission = {
+                        locationPermissionRequest.launch(
+                            arrayOf(
+                                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                                android.Manifest.permission.ACCESS_COARSE_LOCATION
+                            )
+                        )
+                    }
+                )
+            }
+        }
+    }
+
+    private fun checkLocationPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+    }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun AppNavigation() {
+fun AppNavigation(
+    hasPermission: Boolean,
+    onRequestPermission: () -> Unit
+) {
     val navController = rememberNavController()
 
     NavHost(
@@ -77,12 +139,12 @@ fun AppNavigation() {
         startDestination = "main_map"
     ) {
         composable(route = "main_map") {
-            MainScreen(onNewMoment = {
+            MainScreen(hasPermission, onNewMoment = {
                 navController.navigate("new_moment")
-            })
+            }, onRequestPermission = onRequestPermission)
         }
         composable(route = "new_moment") {
-            NewMomentScreen(onSaveMoment = {
+            NewMomentScreen(hasPermission, onSaveMoment = {
                 navController.popBackStack()
             })
         }
@@ -95,7 +157,11 @@ fun AppNavigation() {
 }
 
 @Composable
-fun MainScreen(onNewMoment: () -> Unit) {
+fun MainScreen(
+    hasPermission: Boolean,
+    onNewMoment: () -> Unit,
+    onRequestPermission: () -> Unit
+) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -113,7 +179,11 @@ fun MainScreen(onNewMoment: () -> Unit) {
                 shape = ShapeDefaults.ExtraLarge,
                 containerColor = Color.Blue,
                 onClick = {
-                    onNewMoment()
+                    if (hasPermission) {
+                        onNewMoment()
+                    } else {
+                        onRequestPermission()
+                    }
                 }) {
                 Icon(
                     imageVector = Icons.Default.Add,
@@ -123,24 +193,57 @@ fun MainScreen(onNewMoment: () -> Unit) {
             }
         }
     ) { innerPadding ->
-        val yogyakarta = LatLng(-7.7956, 110.3695)
-        val cameraPositionState = rememberCameraPositionState {
-            position = CameraPosition.fromLatLngZoom(yogyakarta, 12f)
-        }
-
-        GoogleMap(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            cameraPositionState = cameraPositionState
-        ) {
-
+        if (hasPermission) {
+            val yogyakarta = LatLng(-7.7956, 110.3695)
+            val cameraPositionState = rememberCameraPositionState {
+                position = CameraPosition.fromLatLngZoom(yogyakarta, 12f)
+            }
+            GoogleMap(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                cameraPositionState = cameraPositionState
+            ) {
+                // show marker here
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("Location permission is required")
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = onRequestPermission) {
+                    Text("Grant Permission")
+                }
+            }
         }
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun NewMomentScreen(onSaveMoment: () -> Unit) {
+fun NewMomentScreen(hasPermission: Boolean, onSaveMoment: () -> Unit) {
+    var currentLocation by remember { mutableStateOf<LatLng?>(null) }
+    var isLoadingLocation by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+    val currentDateTime = remember { LocalDateTime.now() }
+    val formatter = DateTimeFormatter.ofPattern("MMM dd, yyyy · h:mm a")
+    val formattedDateTime = currentDateTime.format(formatter)
+
+    LaunchedEffect(hasPermission) {
+        if (hasPermission) {
+            isLoadingLocation = true
+            getCurrentLocation(context) { location ->
+                currentLocation = location
+                isLoadingLocation = false
+            }
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -164,7 +267,8 @@ fun NewMomentScreen(onSaveMoment: () -> Unit) {
             )
         }
     ) { innerPadding ->
-        var location: String by remember { mutableStateOf("") }
+        val latitude = currentLocation?.latitude
+        val longitude = currentLocation?.longitude
         var note: String by remember { mutableStateOf("") }
 
         Column(
@@ -175,9 +279,13 @@ fun NewMomentScreen(onSaveMoment: () -> Unit) {
         ) {
             Text("Location")
             OutlinedTextField(
-                value = location,
-                onValueChange = { location = it },
-                placeholder = { Text("e.g., Jetpack Compose", color = Color.LightGray) },
+                value = when {
+                    isLoadingLocation -> "Getting your location..."
+                    currentLocation != null -> "Lat: $latitude, Lng: $longitude"
+                    else -> ""
+                },
+                onValueChange = { },
+                placeholder = { Text("Lat: -7.7956, Lng: 110.3695", color = Color.LightGray) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 readOnly = true
@@ -192,10 +300,11 @@ fun NewMomentScreen(onSaveMoment: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(), minLines = 6
             )
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Dec 30, 2024 2:30 PM")
+            Text(formattedDateTime)
             Spacer(modifier = Modifier.height(48.dp))
             Button(
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoadingLocation && currentLocation != null,
                 content = {
                     Text("Save Moment")
                 }, colors = ButtonDefaults.buttonColors(
@@ -299,10 +408,28 @@ fun DetailMomentScreen(onBackToMap: () -> Unit) {
     }
 }
 
+
+@SuppressLint("MissingPermission")
+private fun getCurrentLocation(
+    context: Context,
+    onLocation: (LatLng) -> Unit
+) {
+    val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+
+    fusedLocationClient.getCurrentLocation(
+        Priority.PRIORITY_HIGH_ACCURACY,
+        CancellationTokenSource().token
+    ).addOnSuccessListener { location ->
+        location?.let {
+            onLocation(LatLng(it.latitude, it.longitude))
+        }
+    }
+}
+
 @Preview(showBackground = true)
 @Composable
 fun GreetingPreview() {
     CityMomentsTheme {
-        AppNavigation()
+        AppNavigation(true, onRequestPermission = {})
     }
 }
