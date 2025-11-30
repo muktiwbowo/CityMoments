@@ -2,11 +2,14 @@
 
 package com.svault.citymoments
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.Geocoder
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -46,6 +49,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,24 +58,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.maps.android.compose.rememberMarkerState
 import com.svault.citymoments.ui.theme.CityMomentsTheme
+import dagger.hilt.android.AndroidEntryPoint
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private val hasLocationPermission = mutableStateOf(false)
 
@@ -79,11 +90,11 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         when {
-            permissions[android.Manifest.permission.ACCESS_FINE_LOCATION] == true -> {
+            permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true -> {
                 hasLocationPermission.value = true
             }
 
-            permissions[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true -> {
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true -> {
                 hasLocationPermission.value = true
             }
 
@@ -100,57 +111,58 @@ class MainActivity : ComponentActivity() {
         setContent {
             CityMomentsTheme {
                 AppNavigation(
-                    hasPermission = hasLocationPermission.value,
-                    onRequestPermission = {
+                    hasPermission = hasLocationPermission.value, onRequestPermission = {
                         locationPermissionRequest.launch(
                             arrayOf(
-                                android.Manifest.permission.ACCESS_FINE_LOCATION,
-                                android.Manifest.permission.ACCESS_COARSE_LOCATION
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION
                             )
                         )
-                    }
-                )
+                    })
             }
         }
     }
 
     private fun checkLocationPermission(): Boolean {
         return ContextCompat.checkSelfPermission(
-            this,
-            android.Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED ||
-                ContextCompat.checkSelfPermission(
-                    this,
-                    android.Manifest.permission.ACCESS_COARSE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
     }
 }
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun AppNavigation(
-    hasPermission: Boolean,
-    onRequestPermission: () -> Unit
+    hasPermission: Boolean, onRequestPermission: () -> Unit
 ) {
     val navController = rememberNavController()
 
     NavHost(
-        navController = navController,
-        startDestination = "main_map"
+        navController = navController, startDestination = "main_map"
     ) {
         composable(route = "main_map") {
             MainScreen(hasPermission, onNewMoment = {
                 navController.navigate("new_moment")
+            }, onDetailMoment = { moment ->
+                navController.navigate("detail_moment/${moment.id}")
             }, onRequestPermission = onRequestPermission)
         }
-        composable(route = "new_moment") {
+        composable(
+            route = "new_moment"
+        ) {
             NewMomentScreen(hasPermission, onSaveMoment = {
                 navController.popBackStack()
             })
         }
-        composable(route = "detail_moment") {
-            DetailMomentScreen(onBackToMap = {
-
+        composable(
+            route = "detail_moment/{moment_id}",
+            arguments = listOf(navArgument("moment_id") { type = NavType.IntType })
+        ) { backStackEntry ->
+            val momentId = backStackEntry.arguments?.getInt("moment_id") ?: -1
+            DetailMomentScreen(momentId, onBackToMap = {
+                navController.popBackStack()
             })
         }
     }
@@ -160,39 +172,35 @@ fun AppNavigation(
 fun MainScreen(
     hasPermission: Boolean,
     onNewMoment: () -> Unit,
-    onRequestPermission: () -> Unit
+    onDetailMoment: (ModelMoment) -> Unit,
+    onRequestPermission: () -> Unit,
+    viewModel: MomentViewModel = hiltViewModel()
 ) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(text = "CityMoments", color = Color.White)
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Blue
-                )
+    val moments by viewModel.moments.collectAsState()
+    Scaffold(modifier = Modifier.fillMaxSize(), topBar = {
+        CenterAlignedTopAppBar(
+            title = {
+                Text(text = "CityMoments", color = Color.White)
+            }, colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = Color.Blue
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                shape = ShapeDefaults.ExtraLarge,
-                containerColor = Color.Blue,
-                onClick = {
-                    if (hasPermission) {
-                        onNewMoment()
-                    } else {
-                        onRequestPermission()
-                    }
-                }) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Add Skill",
-                    tint = Color.White
-                )
-            }
+        )
+    }, floatingActionButton = {
+        FloatingActionButton(
+            shape = ShapeDefaults.ExtraLarge, containerColor = Color.Blue, onClick = {
+                if (hasPermission) {
+                    onNewMoment()
+                } else {
+                    onRequestPermission()
+                }
+            }) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add Skill",
+                tint = Color.White
+            )
         }
-    ) { innerPadding ->
+    }) { innerPadding ->
         if (hasPermission) {
             val yogyakarta = LatLng(-7.7956, 110.3695)
             val cameraPositionState = rememberCameraPositionState {
@@ -204,7 +212,18 @@ fun MainScreen(
                     .padding(innerPadding),
                 cameraPositionState = cameraPositionState
             ) {
-                // show marker here
+                moments.forEach { moment ->
+                    Log.d("DEBUG_:","locationName $${moment.location}")
+                    Marker(
+                        state = rememberMarkerState(
+                            position = LatLng(
+                                moment.latitude, moment.longitude
+                            )
+                        ), title = moment.location, onClick = {
+                            onDetailMoment(moment)
+                            true
+                        })
+                }
             }
         } else {
             Column(
@@ -226,57 +245,61 @@ fun MainScreen(
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun NewMomentScreen(hasPermission: Boolean, onSaveMoment: () -> Unit) {
+fun NewMomentScreen(
+    hasPermission: Boolean, onSaveMoment: () -> Unit,
+    viewModel: MomentViewModel = hiltViewModel()
+) {
     var currentLocation by remember { mutableStateOf<LatLng?>(null) }
     var isLoadingLocation by remember { mutableStateOf(true) }
+    var locationName by remember { mutableStateOf("") }
+    var note: String by remember { mutableStateOf("") }
     val context = LocalContext.current
     val currentDateTime = remember { LocalDateTime.now() }
     val formatter = DateTimeFormatter.ofPattern("MMM dd, yyyy · h:mm a")
     val formattedDateTime = currentDateTime.format(formatter)
+    val geocoder = Geocoder(context, Locale.getDefault())
 
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
             isLoadingLocation = true
             getCurrentLocation(context) { location ->
                 currentLocation = location
+                geocoder.getFromLocation(location.latitude, location.longitude, 1) { addresses ->
+                    val address = addresses.firstOrNull()
+                    locationName = address?.getAddressLine(0) ?: ""
+                }
                 isLoadingLocation = false
             }
         }
     }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
+        modifier = Modifier.fillMaxSize(), topBar = {
             TopAppBar(
                 title = {
                     Text(text = "New Moment", color = Color.White)
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
+                }, colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Blue
-                ),
-                navigationIcon = {
+                ), navigationIcon = {
                     IconButton(onClick = {
                         onSaveMoment()
                     }) {
                         Icon(
-                            Icons.Filled.Close, "Back",
-                            tint = Color.White
+                            Icons.Filled.Close, "Back", tint = Color.White
                         )
                     }
-                }
-            )
-        }
-    ) { innerPadding ->
+                })
+        }) { innerPadding ->
         val latitude = currentLocation?.latitude
         val longitude = currentLocation?.longitude
-        var note: String by remember { mutableStateOf("") }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(20.dp)
-        ) {
+        )
+        {
             Text("Location")
             OutlinedTextField(
                 value = when {
@@ -297,7 +320,8 @@ fun NewMomentScreen(hasPermission: Boolean, onSaveMoment: () -> Unit) {
                 onValueChange = { note = it },
                 placeholder = { Text("What happened here?", color = Color.LightGray) },
                 singleLine = false,
-                modifier = Modifier.fillMaxWidth(), minLines = 6
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 6
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(formattedDateTime)
@@ -307,10 +331,19 @@ fun NewMomentScreen(hasPermission: Boolean, onSaveMoment: () -> Unit) {
                 enabled = !isLoadingLocation && currentLocation != null,
                 content = {
                     Text("Save Moment")
-                }, colors = ButtonDefaults.buttonColors(
+                },
+                colors = ButtonDefaults.buttonColors(
                     containerColor = Color.Blue
-                ), onClick = {
-                    // save to room database
+                ),
+                onClick = {
+                    val moment = ModelMoment(
+                        latitude = latitude ?: 0.0,
+                        longitude = longitude ?:0.0,
+                        location = locationName,
+                        note = note,
+                        date = formattedDateTime
+                    )
+                    viewModel.addMoment(moment)
                     onSaveMoment()
                 })
         }
@@ -318,33 +351,33 @@ fun NewMomentScreen(hasPermission: Boolean, onSaveMoment: () -> Unit) {
 }
 
 @Composable
-fun DetailMomentScreen(onBackToMap: () -> Unit) {
+fun DetailMomentScreen(
+    momentId: Int, onBackToMap: () -> Unit, viewModel: MomentViewModel = hiltViewModel()
+) {
+    val moments by viewModel.moments.collectAsState()
+    val moment = moments.find { it.id == momentId }
     Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
+        modifier = Modifier.fillMaxSize(), topBar = {
             TopAppBar(
                 title = {
                     Text(text = "Detail Moment", color = Color.White)
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
+                }, colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Blue
-                ),
-                navigationIcon = {
+                ), navigationIcon = {
                     IconButton(onClick = {
                         onBackToMap()
                     }) {
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack, "Back",
-                            tint = Color.White
+                            Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White
                         )
                     }
-                }
-            )
-        }
-    ) { innerPadding ->
-        val yogyakarta = LatLng(-7.7956, 110.3695)
+                })
+        }) { innerPadding ->
+        val latitude = moment?.latitude ?: 0.0
+        val longitude = moment?.longitude ?: 0.0
+        val latLng = LatLng(latitude, longitude)
         val cameraPositionState = rememberCameraPositionState {
-            position = CameraPosition.fromLatLngZoom(yogyakarta, 12f)
+            position = CameraPosition.fromLatLngZoom(latLng, 12f)
         }
 
         Column(
@@ -356,11 +389,9 @@ fun DetailMomentScreen(onBackToMap: () -> Unit) {
             GoogleMap(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(150.dp)
-                    .padding(innerPadding),
+                    .height(150.dp),
                 cameraPositionState = cameraPositionState
-            ) {
-            }
+            ) {}
             Spacer(modifier = Modifier.height(24.dp))
             Box(
                 modifier = Modifier
@@ -369,39 +400,33 @@ fun DetailMomentScreen(onBackToMap: () -> Unit) {
                     .padding(16.dp)
             ) {
                 Column {
-                    Text(text = "Estuary Coffee", fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = "Had an amazing manual brew here while working on my Android Revival Project. Perfect place to code!")
+                    Text(text = moment?.note.toString())
                 }
             }
             Spacer(modifier = Modifier.height(24.dp))
             Row {
                 Icon(
-                    Icons.Sharp.LocationOn, "Location",
-                    tint = Color.Red
+                    Icons.Sharp.LocationOn, "Location", tint = Color.Red
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(text = "Yogyakarta, Indonesia", color = Color.Gray)
+                Text(text = moment?.location.toString(), color = Color.Gray)
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row {
                 Icon(
-                    Icons.Filled.DateRange, "Location",
-                    tint = Color.DarkGray
+                    Icons.Filled.DateRange, "Location", tint = Color.DarkGray
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(text = "Dec 30, 2024 2:30 PM", color = Color.Gray)
+                Text(text = moment?.date.toString(), color = Color.Gray)
             }
             Spacer(modifier = Modifier.height(48.dp))
             Button(
-                modifier = Modifier.fillMaxWidth(),
-                content = {
+                modifier = Modifier.fillMaxWidth(), content = {
                     Text("Delete Moment", color = Color.Red)
                 }, colors = ButtonDefaults.buttonColors(
                     containerColor = Color.Transparent
-                ), border = BorderStroke(1.dp, color = Color.Red),
-                onClick = {
-                    // delete moment
+                ), border = BorderStroke(1.dp, color = Color.Red), onClick = {
+                    moment?.let { viewModel.deleteMoment(it) }
                     onBackToMap()
                 })
         }
@@ -411,14 +436,12 @@ fun DetailMomentScreen(onBackToMap: () -> Unit) {
 
 @SuppressLint("MissingPermission")
 private fun getCurrentLocation(
-    context: Context,
-    onLocation: (LatLng) -> Unit
+    context: Context, onLocation: (LatLng) -> Unit
 ) {
     val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
 
     fusedLocationClient.getCurrentLocation(
-        Priority.PRIORITY_HIGH_ACCURACY,
-        CancellationTokenSource().token
+        Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token
     ).addOnSuccessListener { location ->
         location?.let {
             onLocation(LatLng(it.latitude, it.longitude))
