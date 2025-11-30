@@ -44,10 +44,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
@@ -60,14 +62,40 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             CityMomentsTheme {
-                MainScreen()
+                AppNavigation()
             }
         }
     }
 }
 
 @Composable
-fun MainScreen() {
+fun AppNavigation() {
+    val navController = rememberNavController()
+
+    NavHost(
+        navController = navController,
+        startDestination = "main_map"
+    ) {
+        composable(route = "main_map") {
+            MainScreen(onNewMoment = {
+                navController.navigate("new_moment")
+            })
+        }
+        composable(route = "new_moment") {
+            NewMomentScreen(onSaveMoment = {
+                navController.popBackStack()
+            })
+        }
+        composable(route = "detail_moment") {
+            DetailMomentScreen(onBackToMap = {
+
+            })
+        }
+    }
+}
+
+@Composable
+fun MainScreen(onNewMoment: () -> Unit) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -85,7 +113,7 @@ fun MainScreen() {
                 shape = ShapeDefaults.ExtraLarge,
                 containerColor = Color.Blue,
                 onClick = {
-                    // redirect to add/edit moments screen
+                    onNewMoment()
                 }) {
                 Icon(
                     imageVector = Icons.Default.Add,
@@ -112,7 +140,7 @@ fun MainScreen() {
 }
 
 @Composable
-fun NewMomentScreen() {
+fun NewMomentScreen(onSaveMoment: () -> Unit) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -125,7 +153,7 @@ fun NewMomentScreen() {
                 ),
                 navigationIcon = {
                     IconButton(onClick = {
-
+                        onSaveMoment()
                     }) {
                         Icon(
                             Icons.Filled.Close, "Back",
@@ -173,14 +201,15 @@ fun NewMomentScreen() {
                 }, colors = ButtonDefaults.buttonColors(
                     containerColor = Color.Blue
                 ), onClick = {
-
+                    // save to room database
+                    onSaveMoment()
                 })
         }
     }
 }
 
 @Composable
-fun DetailMomentScreen() {
+fun DetailMomentScreen(onBackToMap: () -> Unit) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -193,7 +222,7 @@ fun DetailMomentScreen() {
                 ),
                 navigationIcon = {
                     IconButton(onClick = {
-
+                        onBackToMap()
                     }) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack, "Back",
@@ -261,8 +290,10 @@ fun DetailMomentScreen() {
                     Text("Delete Moment", color = Color.Red)
                 }, colors = ButtonDefaults.buttonColors(
                     containerColor = Color.Transparent
-                ), border = BorderStroke(1.dp, color = Color.Red), onClick = {
-
+                ), border = BorderStroke(1.dp, color = Color.Red),
+                onClick = {
+                    // delete moment
+                    onBackToMap()
                 })
         }
     }
@@ -272,6 +303,6 @@ fun DetailMomentScreen() {
 @Composable
 fun GreetingPreview() {
     CityMomentsTheme {
-        DetailMomentScreen()
+        AppNavigation()
     }
 }
