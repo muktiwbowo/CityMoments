@@ -328,7 +328,7 @@ fun NewMomentScreen(
             Spacer(modifier = Modifier.height(48.dp))
             Button(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isLoadingLocation && currentLocation != null,
+                enabled = !isLoadingLocation && currentLocation != null && note.isNotBlank(),
                 content = {
                     Text("Save Moment")
                 },
